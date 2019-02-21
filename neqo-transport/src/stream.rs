@@ -1,7 +1,7 @@
 use std::cmp::{max, min};
-use std::collections::{BTreeMap, VecDeque};
-
+use std::collections::{BTreeMap, VecDeque, LinkedList};
 use crate::Res;
+use crate::connection::TxMode;
 
 pub trait RxStream {
     fn read(&mut self, buf: &mut [u8]) -> Res<u64>;
@@ -9,11 +9,68 @@ pub trait RxStream {
     fn inbound_stream_frame(&mut self, fin: bool, offset: u64, data: Vec<u8>) -> Res<u64>;
 }
 
-pub trait TxStream {
-    fn send(&mut self, buf: &[u8]);
-    fn tx_data_ready(&self) -> bool;
-    fn tx_buffer(&mut self) -> &mut VecDeque<u8>;
+#[derive(PartialEq)]
+enum TxChunkState {
+    Unsent,
+    Sent(u64),
+    Lost
 }
+    
+struct TxChunk {
+    offset: usize,
+    data: Vec<u8>,
+    state: TxChunkState
+}
+
+pub struct TxBuffer {
+    offset: usize,
+    chunks: LinkedList<TxChunk>
+}
+
+impl TxBuffer {
+    pub fn send(&mut self, buf: &[u8]) {
+        self.chunks.push_back(TxChunk{
+            offset: self.offset,
+            data: Vec::from(buf),
+            state: TxChunkState::Unsent
+        })
+    }
+
+    fn find_first_chunk_by_state(&self, state: TxChunkState) -> Option<&TxChunk> {
+        for c in &self.chunks {
+            if c.state == state {
+                return Some(c)
+            }
+        }
+        None
+    }
+        
+    pub fn next_bytes(&self, _mode: TxMode, l: usize) -> Option<(usize, &[u8])> {
+        // First try to find some unsent stuff.
+        if let Some(c) = self.find_first_chunk_by_state(TxChunkState::Unsent) {
+            Some((c.offset, &c.data))
+        }
+        // How about some lost stuff.
+        else if let Some(c) = self.find_first_chunk_by_state(TxChunkState::Lost) {
+            Some((c.offset, &c.data))
+        } else {
+            None
+        }
+    }
+    
+    fn sent_bytes(&mut self, now: u64, offset: usize, l: usize) -> Res<()> {
+        unimplemented!();
+    }
+    
+    fn lost_bytes(&mut self, now: u64, offset: usize, l: usize) -> Res<()> {
+        unimplemented!();
+    }
+            
+    fn acked_bytes(&mut self, now: u64, offset: usize, l: usize) -> Res<()> {
+        unimplemented!();
+    }
+}
+
 
 #[derive(Debug, Default, PartialEq)]
 pub struct RxStreamOrderer {
@@ -128,20 +185,6 @@ impl BidiStream {
     }
 }
 
-impl TxStream for BidiStream {
-    /// Enqueue some bytes to send
-    fn send(&mut self, buf: &[u8]) {
-        self.tx_queue.extend(buf)
-    }
-
-    fn tx_data_ready(&self) -> bool {
-        self.tx_queue.len() != 0
-    }
-
-    fn tx_buffer(&mut self) -> &mut VecDeque<u8> {
-        &mut self.tx_queue
-    }
-}
 
 impl RxStream for BidiStream {
     fn rx_data_ready(&self) -> bool {
@@ -168,7 +211,7 @@ mod test {
 
     use super::*;
 
-    #[test]
+    // #[test]
     fn test_stream_rx() {
         let frame1 = vec![0; 10];
         let frame2 = vec![0; 12];
