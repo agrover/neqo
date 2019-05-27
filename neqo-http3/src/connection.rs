@@ -161,6 +161,11 @@ pub enum Http3State {
     Closed(AppError),
 }
 
+pub enum Http3Role {
+    Client,
+    Server,
+}
+
 pub struct Http3Connection {
     state: Http3State,
     conn: Connection,
@@ -171,15 +176,15 @@ pub struct Http3Connection {
     new_streams: HashMap<u64, NewStreamTypeReader>,
     qpack_encoder: QPackEncoder,
     qpack_decoder: QPackDecoder,
-    request_streams_client: HashMap<u64, RequestStreamClient>,
-    request_streams_server: HashMap<u64, RequestStreamServer>,
     settings_received: bool,
     streams_are_readable: BTreeSet<u64>,
     streams_have_data_to_send: BTreeSet<u64>,
     // Client only
     events: Rc<RefCell<Http3Events>>,
+    request_streams_client: HashMap<u64, RequestStreamClient>,
     // Server only
-    new_stream_callback: Option<Box<FnMut(&mut RequestStreamServer, bool)>>,
+    handler: Option<fn(&RequestStreamServer, bool) -> (Vec<(String, String)>, String)>,
+    request_streams_server: HashMap<u64, RequestStreamServer>,
 }
 
 impl ::std::fmt::Display for Http3Connection {
@@ -189,7 +194,12 @@ impl ::std::fmt::Display for Http3Connection {
 }
 
 impl Http3Connection {
-    pub fn new(c: Connection, max_table_size: u32, max_blocked_streams: u16) -> Http3Connection {
+    pub fn new(
+        c: Connection,
+        max_table_size: u32,
+        max_blocked_streams: u16,
+        handler: Option<fn(&RequestStreamServer, bool) -> (Vec<(String, String)>, String)>,
+    ) -> Http3Connection {
         qinfo!(
             "Create new http connection with max_table_size: {} and max_blocked_streams: {}",
             max_table_size,
@@ -214,7 +224,7 @@ impl Http3Connection {
             streams_are_readable: BTreeSet::new(),
             streams_have_data_to_send: BTreeSet::new(),
             events: Rc::new(RefCell::new(Http3Events::default())),
-            new_stream_callback: None,
+            handler,
         }
     }
 
@@ -617,8 +627,9 @@ impl Http3Connection {
                 }
             }
             if request_stream.done_reading_request() {
-                if let Some(cb) = &mut self.new_stream_callback {
-                    (cb)(request_stream, false);
+                if let Some(cb) = self.handler {
+                    let (headers, data) = (cb)(request_stream, false);
+                    request_stream.set_response(&headers, data);
                 }
                 if request_stream.has_data_to_send() {
                     self.streams_have_data_to_send.insert(stream_id);
@@ -888,13 +899,6 @@ impl Http3Connection {
         self.request_streams_server
             .insert(stream_id, RequestStreamServer::new(stream_id));
     }
-
-    pub fn set_new_stream_callback<CB: 'static + FnMut(&mut RequestStreamServer, bool)>(
-        &mut self,
-        c: CB,
-    ) {
-        self.new_stream_callback = Some(Box::new(c));
-    }
 }
 
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone)]
@@ -982,6 +986,7 @@ mod tests {
                 Connection::new_client("example.com", &["alpn"], loopback(), loopback()).unwrap(),
                 100,
                 100,
+                None,
             );
             neqo_trans_conn = Connection::new_server(&["key"], &["alpn"]).unwrap();
         } else {
@@ -989,6 +994,7 @@ mod tests {
                 Connection::new_server(&["key"], &["alpn"]).unwrap(),
                 100,
                 100,
+                None,
             );
             neqo_trans_conn =
                 Connection::new_client("example.com", &["alpn"], loopback(), loopback()).unwrap();

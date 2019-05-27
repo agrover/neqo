@@ -48,11 +48,11 @@ impl RequestStreamServer {
         }
     }
 
-    pub fn get_request_headers(&self) -> Vec<(String, String)> {
+    pub fn get_request_headers(&self) -> &[(String, String)] {
         if let Some(h) = &self.request_headers {
-            h.to_vec()
+            h
         } else {
-            Vec::new()
+            &[]
         }
     }
     pub fn set_response(&mut self, headers: &[(String, String)], data: String) {
