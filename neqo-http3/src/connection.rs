@@ -162,8 +162,32 @@ pub enum Http3State {
 }
 
 pub enum Http3Role {
-    Client,
-    Server,
+    Client {
+        events: Rc<RefCell<Http3Events>>,
+        request_streams_client: HashMap<u64, RequestStreamClient>,
+    },
+    Server {
+        handler: fn(&RequestStreamServer, bool) -> (Vec<(String, String)>, String),
+        request_streams_server: HashMap<u64, RequestStreamServer>,
+    },
+}
+
+impl Http3Role {
+    pub fn new_server(
+        handler: fn(&RequestStreamServer, bool) -> (Vec<(String, String)>, String),
+    ) -> Http3Role {
+        Http3Role::Server {
+            request_streams_server: HashMap::new(),
+            handler,
+        }
+    }
+
+    pub fn new_client() -> Http3Role {
+        Http3Role::Client {
+            request_streams_client: HashMap::new(),
+            events: Rc::new(RefCell::new(Http3Events::default())),
+        }
+    }
 }
 
 pub struct Http3Connection {
@@ -179,12 +203,7 @@ pub struct Http3Connection {
     settings_received: bool,
     streams_are_readable: BTreeSet<u64>,
     streams_have_data_to_send: BTreeSet<u64>,
-    // Client only
-    events: Rc<RefCell<Http3Events>>,
-    request_streams_client: HashMap<u64, RequestStreamClient>,
-    // Server only
-    handler: Option<fn(&RequestStreamServer, bool) -> (Vec<(String, String)>, String)>,
-    request_streams_server: HashMap<u64, RequestStreamServer>,
+    role: Http3Role,
 }
 
 impl ::std::fmt::Display for Http3Connection {
@@ -198,7 +217,7 @@ impl Http3Connection {
         c: Connection,
         max_table_size: u32,
         max_blocked_streams: u16,
-        handler: Option<fn(&RequestStreamServer, bool) -> (Vec<(String, String)>, String)>,
+        role: Http3Role,
     ) -> Http3Connection {
         qinfo!(
             "Create new http connection with max_table_size: {} and max_blocked_streams: {}",
@@ -218,13 +237,10 @@ impl Http3Connection {
             qpack_encoder: QPackEncoder::new(true),
             qpack_decoder: QPackDecoder::new(max_table_size, max_blocked_streams),
             new_streams: HashMap::new(),
-            request_streams_client: HashMap::new(),
-            request_streams_server: HashMap::new(),
             settings_received: false,
             streams_are_readable: BTreeSet::new(),
             streams_have_data_to_send: BTreeSet::new(),
-            events: Rc::new(RefCell::new(Http3Events::default())),
-            handler,
+            role,
         }
     }
 
@@ -366,31 +382,42 @@ impl Http3Connection {
         self.control_stream_local.send(&mut self.conn)?;
 
         let to_send = mem::replace(&mut self.streams_have_data_to_send, BTreeSet::new());
-        if self.role() == Role::Client {
-            for stream_id in to_send {
-                if let Some(cs) = &mut self.request_streams_client.get_mut(&stream_id) {
-                    cs.send(&mut self.conn, &mut self.qpack_encoder)?;
-                    if cs.has_data_to_send() {
-                        self.streams_have_data_to_send.insert(stream_id);
+        match self.role {
+            Http3Role::Client {
+                request_streams_client,
+                ..
+            } => {
+                for stream_id in to_send {
+                    if let Some(cs) = &mut request_streams_client.get_mut(&stream_id) {
+                        cs.send(&mut self.conn, &mut self.qpack_encoder)?;
+                        if cs.has_data_to_send() {
+                            self.streams_have_data_to_send.insert(stream_id);
+                        }
                     }
                 }
             }
-        } else {
-            for stream_id in to_send {
-                let mut remove_stream = false;
-                if let Some(cs) = &mut self.request_streams_server.get_mut(&stream_id) {
-                    cs.send(&mut self.conn, &mut self.qpack_encoder)?;
-                    if cs.has_data_to_send() {
-                        self.streams_have_data_to_send.insert(stream_id);
-                    } else {
-                        remove_stream = true;
+            Http3Role::Server {
+                request_streams_server,
+                ..
+            } => {
+                for stream_id in to_send {
+                    let mut remove_stream = false;
+
+                    if let Some(cs) = request_streams_server.get_mut(&stream_id) {
+                        cs.send(&mut self.conn, &mut self.qpack_encoder)?;
+                        if cs.has_data_to_send() {
+                            self.streams_have_data_to_send.insert(stream_id);
+                        } else {
+                            remove_stream = true;
+                        }
                     }
-                }
-                if remove_stream {
-                    self.request_streams_server.remove(&stream_id);
+                    if remove_stream {
+                        request_streams_server.remove(&stream_id);
+                    }
                 }
             }
         }
+
         self.qpack_decoder.send(&mut self.conn)?;
         self.qpack_encoder.send(&mut self.conn)?;
         Ok(())
@@ -1653,7 +1680,7 @@ mod tests {
             }
         }
 
-        // after this stream will be removed from hcoon. We will check this by trying to read
+        // after this stream will be removed from hconn. We will check this by trying to read
         // from the stream and that should fail.
         let mut buf = [0u8; 100];
         if let Err(e) = hconn.read_data(request_stream_id, &mut buf) {
