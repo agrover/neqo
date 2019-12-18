@@ -18,7 +18,9 @@ use std::time::{Duration, Instant};
 
 use smallvec::SmallVec;
 
-use neqo_common::{hex, matches, qdebug, qerror, qinfo, qtrace, qwarn, Datagram, Decoder, Encoder};
+use neqo_common::{
+    hex, matches, qdebug, qerror, qinfo, qtrace, qwarn, Datagram, Decoder, Encoder, NeqoQlogRef,
+};
 use neqo_crypto::agent::CertificateInfo;
 use neqo_crypto::{
     Agent, AntiReplay, AuthenticationStatus, Client, HandshakeState, Record, SecretAgentInfo,
@@ -34,6 +36,7 @@ use crate::packet::{
     decode_packet_hdr, decrypt_packet_body, decrypt_packet_hdr, encode_packet, ConnectionId,
     ConnectionIdDecoder, HeaderProtectionMask, PacketHdr, PacketType,
 };
+use crate::qlog;
 use crate::recovery::{LossRecovery, LossRecoveryMode, LossRecoveryState, RecoveryToken};
 use crate::recv_stream::{RecvStream, RecvStreams, RX_STREAM_DATA_WINDOW};
 use crate::send_stream::{SendStream, SendStreams};
@@ -127,11 +130,11 @@ enum ZeroRttState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct Path {
-    local: SocketAddr,
-    remote: SocketAddr,
-    local_cids: Vec<ConnectionId>,
-    remote_cid: ConnectionId,
+pub struct Path {
+    pub local: SocketAddr,
+    pub remote: SocketAddr,
+    pub local_cids: Vec<ConnectionId>,
+    pub remote_cid: ConnectionId,
 }
 
 impl Path {
@@ -315,6 +318,7 @@ pub struct Connection {
     events: ConnectionEvents,
     token: Option<Vec<u8>>,
     stats: Stats,
+    qlog: Option<NeqoQlogRef>,
     tx_mode: TxMode,
 }
 
@@ -336,6 +340,7 @@ impl Connection {
         cid_manager: CidMgr,
         local_addr: SocketAddr,
         remote_addr: SocketAddr,
+        qlog: Option<NeqoQlogRef>,
     ) -> Res<Self> {
         let dcid = ConnectionId::generate_initial();
         let local_cids = vec![cid_manager.borrow_mut().generate_cid()];
@@ -351,6 +356,7 @@ impl Connection {
                 local_cids,
                 remote_cid: dcid.clone(),
             }),
+            qlog,
         );
         c.crypto.states.init(Role::Client, &dcid);
         Ok(c)
@@ -362,6 +368,7 @@ impl Connection {
         protocols: &[impl AsRef<str>],
         anti_replay: &AntiReplay,
         cid_manager: CidMgr,
+        qlog: Option<NeqoQlogRef>,
     ) -> Res<Self> {
         Ok(Self::new(
             Role::Server,
@@ -370,6 +377,7 @@ impl Connection {
             Some(anti_replay),
             protocols,
             None,
+            qlog,
         ))
     }
 
@@ -409,6 +417,7 @@ impl Connection {
         anti_replay: Option<&AntiReplay>,
         protocols: &[impl AsRef<str>],
         path: Option<Path>,
+        qlog: Option<NeqoQlogRef>,
     ) -> Self {
         let tphandler = Rc::new(RefCell::new(TransportParametersHandler::default()));
         Self::set_tp_defaults(&mut tphandler.borrow_mut().local);
@@ -441,6 +450,7 @@ impl Connection {
             events: ConnectionEvents::default(),
             token: None,
             stats: Stats::default(),
+            qlog,
             tx_mode: TxMode::Normal,
         }
     }
@@ -900,6 +910,7 @@ impl Connection {
                 // on the assert for doesn't exist.
                 // OK, we have a valid packet.
                 self.idle_timeout.on_packet_received(now);
+                qlog::packet_received(&self.qlog, now, &hdr, &body);
                 dump_packet(self, "-> RX", &hdr, &body);
                 frames.extend(self.process_packet(&hdr, body, now)?);
                 if matches!(self.state, State::WaitInitial) {
@@ -1274,6 +1285,8 @@ impl Connection {
 
     fn client_start(&mut self, now: Instant) -> Res<()> {
         qinfo!([self], "client_start");
+        qlog::client_connection_started(&self.qlog, now, self.path.as_ref().unwrap());
+
         self.handshake(now, PNSpace::Initial, None)?;
         self.set_state(State::WaitInitial);
         self.zero_rtt_state = if self.crypto.enable_0rtt(self.role)? {
@@ -2126,6 +2139,7 @@ mod tests {
             Rc::new(RefCell::new(FixedConnectionIdManager::new(3))),
             loopback(),
             loopback(),
+            None,
         )
         .expect("create a default client");
 
@@ -2145,6 +2159,7 @@ mod tests {
             test_fixture::DEFAULT_ALPN,
             &test_fixture::anti_replay(),
             Rc::new(RefCell::new(FixedConnectionIdManager::new(5))),
+            None,
         )
         .expect("create a default server")
     }
@@ -2452,6 +2467,7 @@ mod tests {
             Rc::new(RefCell::new(FixedConnectionIdManager::new(9))),
             loopback(),
             loopback(),
+            None,
         )
         .unwrap();
         let mut server = default_server();
@@ -2680,6 +2696,7 @@ mod tests {
             test_fixture::DEFAULT_ALPN,
             &ar,
             Rc::new(RefCell::new(FixedConnectionIdManager::new(10))),
+            None,
         )
         .unwrap();
 
@@ -2925,6 +2942,7 @@ mod tests {
             test_fixture::DEFAULT_ALPN,
             &test_fixture::anti_replay(),
             Rc::new(RefCell::new(FixedConnectionIdManager::new(6))),
+            None,
         )
         .expect("create a server");
 
