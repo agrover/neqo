@@ -93,7 +93,7 @@ impl CloseError {
         }
     }
 
-    fn code(&self) -> u64 {
+    pub fn code(&self) -> u64 {
         match self {
             CloseError::Transport(c) | CloseError::Application(c) => *c,
         }
