@@ -1232,6 +1232,7 @@ impl Connection {
                 SentPacket::new(now, ack_eliciting, tokens, packet.len(), in_flight),
             );
 
+            qlog::packet_sent(&self.qlog, now, &hdr, &encoder);
             dump_packet(self, "TX ->", &hdr, &encoder);
 
             out_bytes.append(&mut packet);
