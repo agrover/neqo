@@ -21,31 +21,12 @@ use crate::frame::{self, decode_frame, Frame};
 use crate::packet::{PacketHdr, PacketType};
 use crate::QUIC_VERSION;
 
-pub fn client_connection_started(qlog: &Option<NeqoQlogRef>, now: Instant, path: &Path) {
-    if let Some(qlog) = qlog {
-        let mut qlog = qlog.borrow_mut();
-        let elapsed = now.duration_since(qlog.zero_time);
+pub fn server_connection_started(qlog: &Option<NeqoQlogRef>, now: Instant, path: &Path) {
+    connection_started(qlog, now, path)
+}
 
-        qlog.trace.push_connectivity_event(
-            format!("{}", elapsed.as_micros()),
-            ConnectivityEventType::ConnectionStarted,
-            EventData::ConnectionStarted {
-                ip_version: if path.local.is_ipv4() {
-                    "ipv4".into()
-                } else {
-                    "ipv6".into()
-                },
-                src_ip: format!("{}", path.local.ip()),
-                dst_ip: format!("{}", path.remote.ip()),
-                protocol: Some("QUIC".into()),
-                src_port: path.local.port().into(),
-                dst_port: path.remote.port().into(),
-                quic_version: Some(format!("{:x}", QUIC_VERSION)),
-                src_cid: Some(format!("{}", path.local_cids.first().unwrap())),
-                dst_cid: Some(format!("{}", path.remote_cid)),
-            },
-        )
-    }
+pub fn client_connection_started(qlog: &Option<NeqoQlogRef>, now: Instant, path: &Path) {
+    connection_started(qlog, now, path);
 }
 
 pub fn packet_sent(qlog: &Option<NeqoQlogRef>, now: Instant, hdr: &PacketHdr, body: &[u8]) {
@@ -293,5 +274,32 @@ fn pkt_type_to_qlog_pkt_type(ptype: &PacketType) -> qlog::PacketType {
         PacketType::Short => qlog::PacketType::OneRtt,
         PacketType::Retry { .. } => qlog::PacketType::Retry,
         PacketType::VN(_) => qlog::PacketType::VersionNegotiation,
+    }
+}
+
+fn connection_started(qlog: &Option<NeqoQlogRef>, now: Instant, path: &Path) {
+    if let Some(qlog) = qlog {
+        let mut qlog = qlog.borrow_mut();
+        let elapsed = now.duration_since(qlog.zero_time);
+
+        qlog.trace.push_connectivity_event(
+            format!("{}", elapsed.as_micros()),
+            ConnectivityEventType::ConnectionStarted,
+            EventData::ConnectionStarted {
+                ip_version: if path.local.is_ipv4() {
+                    "ipv4".into()
+                } else {
+                    "ipv6".into()
+                },
+                src_ip: format!("{}", path.local.ip()),
+                dst_ip: format!("{}", path.remote.ip()),
+                protocol: Some("QUIC".into()),
+                src_port: path.local.port().into(),
+                dst_port: path.remote.port().into(),
+                quic_version: Some(format!("{:x}", QUIC_VERSION)),
+                src_cid: Some(format!("{}", path.local_cids.first().unwrap())),
+                dst_cid: Some(format!("{}", path.remote_cid)),
+            },
+        )
     }
 }

@@ -1405,6 +1405,10 @@ impl Connection {
             self.validate_odcid()?;
             self.set_state(State::Connected);
             self.set_initial_limits();
+
+            if let Role::Server = self.role() {
+                qlog::server_connection_started(&self.qlog, now, self.path.as_ref().unwrap());
+            }
         }
         Ok(())
     }
