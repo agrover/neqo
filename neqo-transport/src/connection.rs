@@ -1387,10 +1387,6 @@ impl Connection {
             self.crypto.install_keys(self.role);
         }
 
-        if let Role::Server = self.role() {
-            qlog::server_connection_started(&self.qlog, now, self.path.as_ref().unwrap());
-        }
-
         Ok(())
     }
 
@@ -1673,6 +1669,8 @@ impl Connection {
             // Remove the randomized client CID from the list of acceptable CIDs.
             assert_eq!(1, self.valid_cids.len());
             self.valid_cids.clear();
+            // Generate a qlog event that the server connection started.
+            qlog::server_connection_started(&self.qlog, now, self.path.as_ref().unwrap());
         } else {
             self.zero_rtt_state = if self.crypto.tls.info().unwrap().early_data_accepted() {
                 ZeroRttState::AcceptedClient
