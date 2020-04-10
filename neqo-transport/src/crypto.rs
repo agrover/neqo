@@ -250,19 +250,9 @@ impl CryptoDxState {
             0x63, 0x65, 0xbe, 0xf9, 0xf5, 0x02,
         ];
         let cipher = TLS_AES_128_GCM_SHA256;
-        let initial_secret = hkdf::extract(
-            TLS_VERSION_1_3,
-            cipher,
-            Some(
-                hkdf::import_key(TLS_VERSION_1_3, cipher, INITIAL_SALT)
-                    .as_ref()
-                    .unwrap(),
-            ),
-            hkdf::import_key(TLS_VERSION_1_3, cipher, dcid)
-                .as_ref()
-                .unwrap(),
-        )
-        .unwrap();
+        let a = hkdf::import_key(TLS_VERSION_1_3, cipher, INITIAL_SALT).expect("a");
+        let b = hkdf::import_key(TLS_VERSION_1_3, cipher, dcid).expect("b");
+        let initial_secret = hkdf::extract(TLS_VERSION_1_3, cipher, Some(&a), &b).expect("c");
 
         let secret =
             hkdf::expand_label(TLS_VERSION_1_3, cipher, &initial_secret, &[], label).unwrap();
