@@ -6,7 +6,7 @@
 
 // Directly relating to QUIC frames.
 
-use neqo_common::{qdebug, qtrace, Decoder, Encoder};
+use neqo_common::{qdebug, qinfo, qtrace, Decoder, Encoder};
 
 use crate::cid::MAX_CONNECTION_ID_LEN;
 use crate::packet::PacketType;
@@ -727,7 +727,10 @@ impl Frame {
                 })
             }
             FRAME_TYPE_HANDSHAKE_DONE => Ok(Self::HandshakeDone),
-            _ => Err(Error::UnknownFrameType),
+            t => {
+                qinfo!("FT val 0x{:x}", t);
+                Err(Error::UnknownFrameType)
+            }
         }
     }
 }
