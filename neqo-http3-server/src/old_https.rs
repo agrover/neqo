@@ -146,7 +146,9 @@ impl Http09Server {
 
 impl HttpServer for Http09Server {
     fn process(&mut self, dgram: Option<Datagram>, now: Instant) -> Output {
-        self.server.process(dgram, now)
+        let output = self.server.process(dgram, now);
+        eprintln!("Http09 process output: {:?}", output);
+        output
     }
 
     fn process_events(&mut self, args: &Args) {
