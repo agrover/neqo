@@ -584,13 +584,13 @@ impl Server {
     /// Iterate through the pending connections looking for any that might want
     /// to send a datagram.  Stop at the first one that does.
     fn process_next_output(&mut self, now: Instant) -> Option<Datagram> {
-        qtrace!([self], "No packet to send, look at waiting connections");
+        qdebug!([self], "No packet to send, look at waiting connections");
         while let Some(c) = self.waiting.pop_front() {
             if let Some(d) = self.process_connection(c, None, now) {
                 return Some(d);
             }
         }
-        qtrace!([self], "No packet to send still, run timers");
+        qdebug!([self], "No packet to send still, run timers");
         while let Some(c) = self.timers.take_next(now) {
             if let Some(d) = self.process_connection(c, None, now) {
                 return Some(d);
